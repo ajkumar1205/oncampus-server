@@ -1,0 +1,21 @@
+[package]
+name = "oncampus"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+actix-web = "4.9.0"
+anyhow = "1.0.93"
+chrono = { version = "0.4.38", features = ["serde"] }
+dotenvy = "0.15.7"
+env_logger = "0.11.5"
+futures = "0.3.31"
+lettre = "0.11.10"
+libsql = "0.6.0"
+log = "0.4.22"
+rand = "0.8.5"
+serde = { version = "1.0.215", features = ["derive"] }
+serde_json = "1.0.133"
+uuid = { version = "1.11.0", features = ["v6"] }
+validator = "0.19.0"
+validator_derive = "0.19.0"
