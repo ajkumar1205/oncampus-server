@@ -91,7 +91,7 @@ pub async fn send_otp(
 
     let email = email.into_inner();
 
-    if email.email.ends_with("dcrustm.org") {
+    if !email.email.ends_with("dcrustm.org") {
         return Ok(HttpResponse::BadRequest().body("Only DCRUSTM email addresses are allowed"));
     }
 
