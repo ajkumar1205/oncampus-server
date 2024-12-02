@@ -1,3 +1,5 @@
 /target
 .env
-local.db*
+*.db*
+*.pem
+*.log

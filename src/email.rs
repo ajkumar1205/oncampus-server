@@ -1,15 +1,23 @@
-use lettre::{transport::smtp::authentication::Credentials, Message, SmtpTransport, Transport};
+use actix_web::web;
+use lettre::{
+    message::Mailbox,
+    transport::smtp::{
+        authentication::Credentials,
+        client::{Tls, TlsParametersBuilder},
+    },
+    Address, AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
+};
 
 #[derive(Debug, Clone)]
 pub struct Email {
-    mailer: SmtpTransport,
+    mailer: AsyncSmtpTransport<Tokio1Executor>,
     email: String,
 }
 
 impl Email {
     pub fn init(username: String, password: String) -> Result<Email, Box<dyn std::error::Error>> {
         let cred = Credentials::new(username.clone(), password);
-        let mailer = SmtpTransport::relay("smtp.gmail.com")?
+        let mailer = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay("smtp.gmail.com")?
             .credentials(cred)
             .build();
 
@@ -19,14 +27,17 @@ impl Email {
         })
     }
 
-    pub fn send(&self, to: String, otp: String) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn send(&self, to: String, otp: String) -> Result<(), Box<dyn std::error::Error>> {
         let email = Message::builder()
-            .from(format!("OnCampus {}", &self.email).parse()?)
+            .from(Mailbox::new(
+                Some("OnCampus".to_owned()),
+                Address::new("oncampus.chat", "gmail.com")?,
+            ))
             .to(to.parse()?)
             .subject("OnCampus Email Verification")
             .body(format!("The otp for OnCampus is {}", otp))?;
 
-        self.mailer.send(&email)?;
+        self.mailer.send(email).await?;
 
         Ok(())
     }

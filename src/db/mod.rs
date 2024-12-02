@@ -2,14 +2,14 @@ use libsql::{params, Builder, Connection, Database};
 use std::{sync::Arc, time::Duration};
 
 pub struct Db {
-    conn: Arc<Connection>,
+    conn: Connection,
     database: Database,
 }
 
 impl Db {
     pub async fn init_turso(url: String, auth_token: String) -> Result<Self, libsql::Error> {
         let db = Builder::new_remote_replica("local.db", url, auth_token)
-            .sync_interval(Duration::from_secs(60))
+            .sync_interval(Duration::from_secs(30))
             .build()
             .await?;
 
@@ -77,7 +77,7 @@ impl Db {
         conn.execute(create_user_id_index, params!()).await?;
 
         Ok(Self {
-            conn: Arc::new(conn),
+            conn: conn,
             database: db,
         })
     }
@@ -88,8 +88,8 @@ impl Db {
         &self.database
     }
 
-    pub fn get_conn(&self) -> Arc<Connection> {
-        self.conn.clone()
+    pub fn get_conn(&self) -> &Connection {
+        &self.conn
     }
 
     pub async fn drop_db(&self) -> Result<(), libsql::Error> {
