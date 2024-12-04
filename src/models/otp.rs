@@ -2,8 +2,7 @@ use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use validator_derive::Validate;
 
-use libsql::{Row, de};
-use chrono::prelude::*;
+use libsql::Row;
 
 #[derive(Debug, Serialize, Deserialize, Validate)]
 pub struct Otp {
@@ -21,14 +20,11 @@ impl TryFrom<Row> for Otp {
         // Extract values from the row
         let email: String = row.get(0)?;
         let otp: String = row.get(1)?;
-        
+
         // Convert timestamp to NaiveDateTime
         let created_at_str: String = row.get(2)?;
         log::info!("created_at_str: {}", created_at_str);
-        let created_at = NaiveDateTime::parse_from_str(
-            &created_at_str, 
-            "%Y-%m-%d %H:%M:%S"
-        )?;
+        let created_at = NaiveDateTime::parse_from_str(&created_at_str, "%Y-%m-%d %H:%M:%S")?;
 
         Ok(Otp {
             email,

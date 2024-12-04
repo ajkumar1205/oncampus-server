@@ -1,27 +1,29 @@
+use std::sync::Arc;
+
 use actix_web::{
     error,
     web::{Data, Json},
-    HttpResponse,
+    HttpMessage, HttpRequest, HttpResponse,
 };
 use chrono::Duration;
-use futures::{FutureExt, TryFutureExt};
 use libsql::{params, Connection};
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use token::{Claims, JWT};
 use uuid::Timestamp;
 
 use validator::Validate;
 use validator_derive::Validate;
 
-use crate::{email, models::otp::Otp};
+use crate::models::{otp::Otp, user::User};
 use crate::{email::Email, models::user::InsertUser};
 
-mod token;
+pub mod token;
 
 // ======================================== REGISTER USER FOR FURTHER VERIFICATION ==========================================
 
-#[actix_web::post("/auth/register")]
+#[actix_web::post("/register")]
 pub async fn register_user(
     user: Json<InsertUser>,
     conn: Data<Connection>,
@@ -32,10 +34,12 @@ pub async fn register_user(
     })?;
 
     if user.username.contains(" ") || user.username.contains("@") || user.username.contains("/") {
+        info!("Username cannot contain spaces or @");
         return Ok(HttpResponse::BadRequest().body("Username cannot contain spaces or @"));
     }
 
     if !user.email.ends_with("dcrustm.org") {
+        info!("Only DCRUSTM email addresses are allowed");
         return Ok(HttpResponse::BadRequest().body("Only DCRUSTM email addresses are allowed"));
     }
 
@@ -59,6 +63,7 @@ pub async fn register_user(
         })?;
 
     if let Ok(Some(_)) = row.next().await {
+        info!("User with this email already exists");
         return Ok(HttpResponse::BadRequest().body("User with this email already exists"));
     }
 
@@ -67,7 +72,17 @@ pub async fn register_user(
         error::ErrorInternalServerError("Failed to register user. Please try again.")
     })?;
 
-    Ok(HttpResponse::Created().json(json!(user)))
+    Ok(HttpResponse::Created().json(json!({
+        "user": {
+            "id": uuid,
+            "email": user.email,
+            "username": user.username,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "roll": user.roll,
+            "dob": user.dob
+        }
+    })))
 }
 
 // =====================================  SENDS OTP FOR EMAIL VERIFICATION =================================================
@@ -78,7 +93,7 @@ pub struct EmailVerificationForm {
     email: String,
 }
 
-#[actix_web::post("/auth/send-otp")]
+#[actix_web::post("/send-otp")]
 pub async fn send_otp(
     conn: Data<Connection>,
     email: Json<EmailVerificationForm>,
@@ -131,9 +146,10 @@ pub struct OTPVerificationForm {
     email: String,
 }
 
-#[actix_web::post("/auth/verify-otp")]
+#[actix_web::post("/verify-otp")]
 pub async fn verify_otp(
     conn: Data<Connection>,
+    jwt: Data<token::JWT>,
     form: Json<OTPVerificationForm>,
 ) -> Result<HttpResponse, actix_web::Error> {
     if let Err(e) = form.validate() {
@@ -164,8 +180,226 @@ pub async fn verify_otp(
         && otp.email == form.email
         && otp.created_at.and_utc() + Duration::minutes(5) > chrono::Utc::now()
     {
-        return Ok(HttpResponse::Ok().body("Your email has been verified"));
+        // WRITE UPDATE QUERY TO MARK USER is_active = true
+        conn.execute(
+            "UPDATE users SET is_active = true WHERE email = ?1",
+            params![form.email.clone()],
+        )
+        .await
+        .map_err(|e| {
+            error!("Error updating user: {:?}", e);
+            error::ErrorInternalServerError("Something went wrong")
+        })?;
+
+        let user_id = conn
+            .query("SELECT id FROM users WHERE email = ?1", params!(form.email))
+            .await
+            .map_err(|e| {
+                error!("Error fetching user: {:?}", e);
+                error::ErrorInternalServerError("Something went wrong")
+            })?
+            .next()
+            .await
+            .map_err(|e| {
+                error!("Error fetching user: {:?}", e);
+                error::ErrorInternalServerError("Something went wrong")
+            })?
+            .unwrap()
+            .get::<String>(0)
+            .unwrap();
+
+        let mut claim = Claims::new(user_id);
+
+        let access_token = claim.get_access(&jwt).map_err(|e| {
+            error!("Error generating access token: {:?}", e);
+            error::ErrorInternalServerError("Something went wrong")
+        })?;
+        let refresh_token = claim.get_refresh(&jwt).map_err(|e| {
+            error!("Error generating refresh token: {:?}", e);
+            error::ErrorInternalServerError("Something went wrong")
+        })?;
+
+        return Ok(HttpResponse::Ok().json(json!({
+            "tokens" : {
+                "access_token": access_token,
+                "refresh_token": refresh_token
+            }
+        })));
     }
 
     Ok(HttpResponse::BadRequest().body("Invalid OTP"))
+}
+
+// ================================================== REFRESH THE EXPIRED ACCESS TOKEN ========================================================
+
+#[derive(Debug, Serialize, Deserialize)]
+struct RefreshToken {
+    token: String,
+}
+
+#[actix_web::post("/refresh")]
+pub async fn refresh_tokens(
+    token: Json<RefreshToken>,
+    conn: Data<Connection>,
+    jwt: Data<token::JWT>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let refresh = token.into_inner().token;
+    let jwt = jwt.into_inner();
+    let conn = conn.into_inner();
+    let rclaim: Claims;
+    if let Ok(r) = Claims::decode(&refresh, &jwt) {
+        rclaim = r;
+    } else {
+        return Ok(HttpResponse::Unauthorized().body("Invalid Token in body"));
+    }
+
+    if rclaim.token != "refresh" {
+        return Ok(HttpResponse::Unauthorized().body("Use Refresh token"));
+    }
+
+    if let Ok(b) = Claims::is_valid(&refresh, &conn, &jwt).await {
+        if b {
+            return Ok(HttpResponse::Unauthorized().body("Token is blacklisted"));
+        }
+    } else {
+        return Err(error::ErrorInternalServerError("Something went wrong"));
+    }
+
+    Claims::blacklist(&refresh, &conn).await.map_err(|e| {
+        error!("Error blacklisting token: {:?}", e);
+        error::ErrorInternalServerError("Something went wrong")
+    })?;
+
+    let mut tokens = Claims::new(rclaim.sub.clone());
+
+    let access_token = tokens.get_access(&jwt).map_err(|e| {
+        error!("Error generating access token: {:?}", e);
+        error::ErrorInternalServerError("Something went wrong")
+    })?;
+    let refresh_token = tokens.get_refresh(&jwt).map_err(|e| {
+        error!("Error generating refresh token: {:?}", e);
+        error::ErrorInternalServerError("Something went wrong")
+    })?;
+
+    Ok(HttpResponse::Ok().json(json!({
+        "tokens" : {
+            "access_token": access_token,
+            "refresh_token": refresh_token
+        }
+    })))
+}
+
+// ======================================== LOGIN ENDPOINT ============================================
+#[derive(Debug, Serialize, Deserialize, Validate)]
+pub struct Credentials {
+    #[validate(length(min = 4, message = "Username must be at least 4 characters long"))]
+    user: String,
+    password: String,
+}
+
+#[actix_web::post("/login")]
+pub async fn login(
+    cred: Json<Credentials>,
+    conn: Data<Connection>,
+    jwt: Data<JWT>,
+) -> Result<HttpResponse, actix_web::Error> {
+    cred.validate().map_err(|validation_errors| {
+        info!("User validation failed: {:?}", validation_errors);
+        error::ErrorBadRequest(serde_json::to_string(&validation_errors).unwrap_or_default())
+    })?;
+
+    let cred = cred.into_inner();
+    let conn = conn.into_inner();
+
+    let mut row = conn
+        .query(
+            "SELECT id, password FROM users WHERE username = ?1",
+            params![cred.user.clone()],
+        )
+        .await
+        .map_err(|e| {
+            error!("Error checking if user exists: {:?}", e);
+            error::ErrorInternalServerError("Failed to login user. Please try again.")
+        })?;
+
+    let user = match row.next().await {
+        Ok(Some(user)) => user,
+        _ => return Ok(HttpResponse::BadRequest().body("User not found")),
+    };
+
+    let password = user.get::<String>(1).unwrap();
+    if bcrypt::verify(cred.password, &password).unwrap() {
+        let user_id = user.get::<String>(0).unwrap();
+        let mut claim = Claims::new(user_id);
+
+        let access_token = claim.get_access(&jwt).map_err(|e| {
+            error!("Error generating access token: {:?}", e);
+            error::ErrorInternalServerError("Something went wrong")
+        })?;
+        let refresh_token = claim.get_refresh(&jwt).map_err(|e| {
+            error!("Error generating refresh token: {:?}", e);
+            error::ErrorInternalServerError("Something went wrong")
+        })?;
+
+        return Ok(HttpResponse::Ok().json(json!({
+            "tokens" : {
+                "access_token": access_token,
+                "refresh_token": refresh_token
+            }
+        })));
+    }
+
+    Ok(HttpResponse::BadRequest().body("Invalid credentials"))
+}
+
+// ======================================== LOGOUT ENDPOINT ============================================
+
+#[actix_web::post("/logout")]
+async fn logout(
+    req: HttpRequest,
+    refresh: Json<RefreshToken>,
+    conn: Data<Connection>,
+    jwt: Data<JWT>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let refresh = refresh.into_inner().token;
+    let jwt = jwt.into_inner();
+    let conn = conn.into_inner();
+
+    let access: Arc<String>;
+    if let Some(t) = req.extensions().get::<Arc<String>>() {
+        access = t.clone();
+    } else {
+        return Ok(HttpResponse::Unauthorized().body("Token not found"));
+    }
+
+    let rclaim: Claims;
+    if let Ok(r) = Claims::decode(&refresh, &jwt) {
+        rclaim = r;
+    } else {
+        return Ok(HttpResponse::Unauthorized().body("Invalid Token in body"));
+    }
+
+    if rclaim.token != "refresh" {
+        return Ok(HttpResponse::Unauthorized().body("Use Refresh token"));
+    }
+
+    if let Ok(b) = Claims::is_valid(&refresh, &conn, &jwt).await {
+        if !b {
+            return Ok(HttpResponse::Unauthorized().body("Token is blacklisted"));
+        }
+    } else {
+        return Err(error::ErrorInternalServerError("Something went wrong"));
+    }
+
+    Claims::blacklist(&refresh, &conn).await.map_err(|e| {
+        error!("Error blacklisting token: {:?}", e);
+        error::ErrorInternalServerError("Something went wrong")
+    })?;
+
+    Claims::blacklist(&access, &conn).await.map_err(|e| {
+        error!("Error blacklisting token: {:?}", e);
+        error::ErrorInternalServerError("Something went wrong")
+    })?;
+
+    Ok(HttpResponse::Ok().body("Logged out successfully"))
 }

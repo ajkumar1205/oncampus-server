@@ -1,12 +1,10 @@
 use std::sync::Arc;
 
 use chrono::NaiveDate;
-use libsql::{params, Connection};
+use libsql::{params, Connection, Row};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use validator_derive::Validate;
-
-use crate::email;
 
 #[derive(Debug, Serialize, Validate, Deserialize)]
 pub struct User {
