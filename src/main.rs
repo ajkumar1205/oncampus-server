@@ -10,12 +10,12 @@ use std::rc::Rc;
 use std::{env, fs::File, sync::Arc};
 
 mod auth;
+mod aws;
 mod db;
 mod email;
 mod middleware;
 mod models;
 mod posts;
-mod aws;
 
 use db::Db;
 use email::Email;
@@ -24,8 +24,8 @@ use email::Email;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     // std::env::set_var("RUST_LOG", "debug");
-    let log_file = File::create("server.log")?;
-    let trace_log_file = File::create("server.trace.log")?;
+    let log_file = File::open("server.log")?;
+    let trace_log_file = File::open("server.trace.log")?;
 
     CombinedLogger::init(vec![
         TermLogger::new(
@@ -40,9 +40,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let url = env::var("DB_DCRUST_URL")?;
     let token = env::var("DB_DCRUST_TOKEN")?;
-
     let email = env::var("EMAIL")?;
     let email_pass = env::var("EMAIL_APP_PASSWORD")?;
+    let access_key_id = env::var("AWS_ACCESS_KEY_ID")?;
+    let secret_access_key = env::var("AWS_SECRET_ACCESS_KEY")?;
+    let region = env::var("AWS_REGION")?;
+    let bucket = env::var("AWS_BUCKET")?;
 
     let db = Db::init(url, token).await?;
     // db.drop_db().await?;
@@ -52,6 +55,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mail_data = web::Data::new(Email::init(email, email_pass)?);
 
     let jwt = web::Data::new(JWT::init()?);
+
+    let s3 = web::Data::new(
+        aws::S3::init(access_key_id, secret_access_key, region, bucket, "oncampus").await?,
+    );
 
     HttpServer::new(move || {
         App::new()
@@ -66,19 +73,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .into()
             }))
+            .app_data(s3.clone())
             .service(
                 web::scope("/auth")
                     .service(register_user)
                     .service(verify_otp)
                     .service(send_otp)
                     .service(refresh_tokens)
-                    .service(login)
+                    .service(login),
             )
             .service(
                 web::scope("/api")
                     .wrap(from_fn(middleware::jwt))
                     .service(home)
-                    .service(logout)
+                    .service(logout),
             )
             .default_service(web::route().to(|| async { actix_web::HttpResponse::NotFound() }))
     })
@@ -92,7 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[actix_web::get("/")]
 async fn home(req: HttpRequest) -> Result<HttpResponse, actix_web::Error> {
     let claims: Arc<Claims>;
-    if let Some(r)  = req.extensions().get::<Arc<Claims>>() {
+    if let Some(r) = req.extensions().get::<Arc<Claims>>() {
         claims = r.clone();
     } else {
         return Ok(HttpResponse::Unauthorized().body("Token not found"));

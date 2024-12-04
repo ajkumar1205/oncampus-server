@@ -55,6 +55,7 @@ impl Db {
                     id TEXT PRIMARY KEY,
                     user TEXT NOT NULL,
                     text TEXT,
+                    pubic BOOLEAN DEFAULT TRUE,
                     likes INTEGER DEFAULT 0,
                     comments INTEGER DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
