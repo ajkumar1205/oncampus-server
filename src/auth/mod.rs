@@ -17,7 +17,7 @@ use validator::Validate;
 use validator_derive::Validate;
 
 use crate::models::{otp::Otp, user::User};
-use crate::{email::Email, models::user::InsertUser};
+use crate::{email::Email, models::user::CreateUser};
 
 pub mod token;
 
@@ -25,9 +25,9 @@ pub mod token;
 
 #[actix_web::post("/register")]
 pub async fn register_user(
-    user: Json<InsertUser>,
+    user: Json<CreateUser>,
     conn: Data<Connection>,
-) -> Result<HttpResponse, actix_web::error::Error> {
+) -> Result<HttpResponse, actix_web::Error> {
     user.validate().map_err(|validation_errors| {
         info!("User validation failed: {:?}", validation_errors);
         error::ErrorBadRequest(serde_json::to_string(&validation_errors).unwrap_or_default())

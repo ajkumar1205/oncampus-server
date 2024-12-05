@@ -29,7 +29,7 @@ pub struct User {
 }
 
 #[derive(Debug, Serialize, Deserialize, Validate)]
-pub struct InsertUser {
+pub struct CreateUser {
     #[validate(email(message = "Invalid email"))]
     pub email: String,
     #[validate(length(min = 8, message = "Password must be at least 8 characters long"))]
@@ -42,7 +42,7 @@ pub struct InsertUser {
     pub dob: NaiveDate,
 }
 
-impl InsertUser {
+impl CreateUser {
     pub async fn insert_into_db(
         &self,
         uuid: Uuid,
