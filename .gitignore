@@ -2,4 +2,7 @@
 .env
 *.db*
 *.pem
+*.log.shuttle*
+Secrets*.toml
 *.log
+.shuttle
