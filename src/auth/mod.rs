@@ -313,7 +313,7 @@ pub async fn login(
 
     let mut row = conn
         .query(
-            "SELECT id, password FROM users WHERE username = ?1",
+            "SELECT * FROM users WHERE username = ?1",
             params![cred.user.clone()],
         )
         .await
@@ -328,25 +328,38 @@ pub async fn login(
     };
 
     let password = user.get::<String>(1).unwrap();
-    if bcrypt::verify(cred.password, &password).unwrap() {
-        let user_id = user.get::<String>(0).unwrap();
-        let mut claim = Claims::new(user_id);
 
-        let access_token = claim.get_access(&jwt).map_err(|e| {
-            error!("Error generating access token: {:?}", e);
-            error::ErrorInternalServerError("Something went wrong")
-        })?;
-        let refresh_token = claim.get_refresh(&jwt).map_err(|e| {
-            error!("Error generating refresh token: {:?}", e);
-            error::ErrorInternalServerError("Something went wrong")
-        })?;
+    if let Ok(val) = bcrypt::verify(cred.password, &password){
+        if val {
+            let user_id = user.get::<String>(0).unwrap();
+            let mut claim = Claims::new(user_id.clone());
 
-        return Ok(HttpResponse::Ok().json(json!({
-            "tokens" : {
-                "access_token": access_token,
-                "refresh_token": refresh_token
-            }
-        })));
+            let access_token = claim.get_access(&jwt).map_err(|e| {
+                error!("Error generating access token: {:?}", e);
+                error::ErrorInternalServerError("Something went wrong")
+            })?;
+            let refresh_token = claim.get_refresh(&jwt).map_err(|e| {
+                error!("Error generating refresh token: {:?}", e);
+                error::ErrorInternalServerError("Something went wrong")
+            })?;
+
+            return Ok(HttpResponse::Ok().json(json!({
+                "tokens" : {
+                    "access_token": access_token,
+                    "refresh_token": refresh_token
+                },
+                "user" : {
+                    "id": user_id,
+                    "email": user.get::<String>(9).unwrap(),
+                    "username": user.get::<String>(2).unwrap(),
+                    "first_name": user.get::<String>(4).unwrap(),
+                    "last_name": user.get::<String>(5).unwrap(),
+                    "roll": user.get::<String>(1).unwrap(),
+                    "dob": user.get::<String>(10).unwrap(),
+                    "bio": user.get::<Option<String>>(14).unwrap_or(Some("".to_string())),
+                }
+            })));
+        }
     }
 
     Ok(HttpResponse::BadRequest().body("Invalid credentials"))

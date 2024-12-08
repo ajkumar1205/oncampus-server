@@ -95,7 +95,7 @@ impl RetrieveOtherPost {
     pub async fn retrieve_from_db(
         user: &String,
         conn: &Connection,
-        limit: u32,
+        limit: i32,
     ) -> Result<Vec<RetrieveOtherPost>, Box<dyn std::error::Error>> {
         let mut posts = vec![];
         // let mut stmt = conn.prepare(
@@ -171,6 +171,56 @@ impl LikePost {
             UPDATE posts
             SET likes = likes + 1
             WHERE id = ?1
+            "#,
+            params![post.clone()],
+        )
+        .await?;
+
+        tran.commit().await?;
+        Ok(())
+    }
+}
+
+pub struct DeletePost;
+
+impl DeletePost {
+    pub async fn delete_from_db(
+        user: &String,
+        post: &String,
+        conn: &Connection,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let tran = conn.transaction().await?;
+        tran.execute(
+            r#"
+            DELETE FROM posts
+            WHERE id = ?1 AND user = ?2
+            "#,
+            params![post.clone(), user.clone()],
+        )
+        .await?;
+
+        tran.execute(
+            r#"
+            DELETE FROM post_images
+            WHERE post = ?1
+            "#,
+            params![post.clone()],
+        )
+        .await?;
+
+        tran.execute(
+            r#"
+            DELETE FROM post_likes
+            WHERE post = ?1
+            "#,
+            params![post.clone()],
+        )
+        .await?;
+
+        tran.execute(
+            r#"
+            DELETE FROM post_comments
+            WHERE post = ?1
             "#,
             params![post.clone()],
         )

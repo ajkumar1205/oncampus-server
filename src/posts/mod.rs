@@ -7,7 +7,7 @@ use actix_web::{
 };
 use libsql::Connection;
 use log::error;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::{Timestamp, Uuid};
 use validator::Validate;
@@ -154,16 +154,23 @@ pub async fn create(
 //     Ok(HttpResponse::Ok().json(json!(posts)))
 // }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct CountQuery {
+    count: Option<i32>,
+}
+
 #[actix_web::get("/list")]
 pub async fn list_posts(
     // s3: Data<S3>,
     req: HttpRequest,
     conn: Data<Connection>,
-    query: Query<Option<u32>>,
+    query: Query<CountQuery>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let user = req.extensions().get::<Arc<Claims>>().unwrap().clone();
+    let query = query.into_inner();
+    log::info!("Query: {:?}", query);
 
-    let limit = query.unwrap_or(10);
+    let limit = query.count.unwrap_or(10);
 
     let conn = conn.into_inner();
     let posts = post::RetrieveOtherPost::retrieve_from_db(&user.sub, &conn, limit)
