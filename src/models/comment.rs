@@ -70,7 +70,7 @@ impl RetrieveComment {
             INNER JOIN post_comments
             ON users.id = post_comments.user
             WHERE post_comments.post = ?1
-            ORDER BY created_at DESC
+            ORDER BY post_comments.created_at DESC
             "#,
                 params![post.clone()],
             )

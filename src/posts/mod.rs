@@ -154,13 +154,41 @@ pub async fn create(
 //     Ok(HttpResponse::Ok().json(json!(posts)))
 // }
 
+// ==================================================== LIST OTHER POSTS ======================================================
+
 #[derive(Debug, Serialize, Deserialize)]
 struct CountQuery {
     count: Option<i32>,
 }
 
 #[actix_web::get("/list")]
-pub async fn list_posts(
+pub async fn list_other_posts(
+    // s3: Data<S3>,
+    req: HttpRequest,
+    conn: Data<Connection>,
+    query: Query<CountQuery>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let user = req.extensions().get::<Arc<Claims>>().unwrap().clone();
+    let query = query.into_inner();
+    log::info!("Query: {:?}", query);
+
+    let limit = query.count.unwrap_or(10);
+
+    let conn = conn.into_inner();
+    let posts = post::RetrieveOtherPost::retrieve_from_db(&user.sub, &conn, limit)
+        .await
+        .map_err(|e| {
+            error!("Error while retrieving posts {}", e);
+            error::ErrorBadGateway("Something went wrong while fetching posts")
+        })?;
+
+    Ok(HttpResponse::Ok().json(json!(posts)))
+}
+
+// ==================================================== LIST FRIENDS POSTS ======================================================
+
+#[actix_web::get("/list/friends")]
+pub async fn list_friends_posts(
     // s3: Data<S3>,
     req: HttpRequest,
     conn: Data<Connection>,

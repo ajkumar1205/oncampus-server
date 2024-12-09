@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use libsql::{params, Connection, Transaction};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
@@ -228,5 +230,86 @@ impl DeletePost {
 
         tran.commit().await?;
         Ok(())
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RetrieveFriendsPost {
+    pub id: String,
+    pub user: String,
+    pub username: String,
+    // pub user_profile: Option<String>,
+    pub likes: u32,
+    pub comments: u32,
+    pub text: String,
+    // pub images: Vec<String>,
+    pub created_at: String,
+}
+
+impl RetrieveFriendsPost {
+    pub async fn retrieve_from_db(
+        user: &String,
+        conn: &Connection,
+        limit: i32,
+    ) -> Result<Vec<RetrieveFriendsPost>, Box<dyn std::error::Error>> {
+        let mut posts = vec![];
+
+        let mut stmt = conn.prepare(
+            r#"
+                SELECT posts.id, posts.user, users.username, posts.likes, posts.comments, posts.text, posts.created_at
+                FROM users 
+                INNER JOIN posts ON users.id = posts.user
+                WHERE posts.public = true
+                ORDER BY posts.created_at DESC
+                LIMIT ?1
+            "#
+        ).await?;
+
+        let mut frnds = conn
+            .prepare(
+                r#"
+                SELECT followed_id
+                FROM followers
+                WHERE follower_id = ?1
+            "#,
+            )
+            .await?;
+
+        let mut frndsMap: HashSet<String> = HashSet::new();
+        let mut frows = frnds.query(params![user.clone()]).await?;
+
+        while let Some(row) = frows.next().await? {
+            let frnd: String = row.get(0)?;
+            frndsMap.insert(frnd);
+        }
+
+        let mut rows = stmt.query(params![limit]).await?;
+        while let Some(row) = rows.next().await? {
+            let username: String = row.get(2)?;
+            if !frndsMap.contains(&username) {
+                continue;
+            }
+            let id: String = row.get(0)?;
+            let user: String = row.get(1)?;
+            // let user_profile = row.get(3)?;
+            let likes: u32 = row.get(3)?;
+            let comments: u32 = row.get(4)?;
+            let text: String = row.get(5)?;
+            let created_at: String = row.get(6)?;
+
+            posts.push(RetrieveFriendsPost {
+                id,
+                user,
+                username,
+                // user_profile,
+                likes,
+                comments,
+                text,
+                // images,
+                created_at,
+            });
+        }
+
+        Ok(posts)
     }
 }

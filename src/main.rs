@@ -6,7 +6,7 @@ use auth::token::{Claims, JWT};
 use auth::{login, logout, refresh_tokens, register_user, send_otp, verify_otp};
 use libsql::{params, Connection};
 use posts::*;
-use profile::update;
+use profile::{search, update};
 use std::rc::Rc;
 use std::{env, fs::File, sync::Arc};
 
@@ -87,8 +87,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .service(login),
             )
             .service(
-                web::scope("/profile")
+                web::scope("/profiles")
                     .wrap(from_fn(middleware::jwt))
+                    .service(search)
                     .service(update)
                     .service(logout),
             )
@@ -96,7 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 web::scope("/posts")
                     .wrap(from_fn(middleware::jwt))
                     .service(create)
-                    .service(list_posts)
+                    .service(list_other_posts)
                     .service(like)
                     .service(list_comments)
                     .service(comment),

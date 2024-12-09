@@ -327,9 +327,9 @@ pub async fn login(
         _ => return Ok(HttpResponse::BadRequest().body("User not found")),
     };
 
-    let password = user.get::<String>(1).unwrap();
+    let password = user.get::<String>(3).unwrap();
 
-    if let Ok(val) = bcrypt::verify(cred.password, &password){
+    if let Ok(val) = bcrypt::verify(cred.password, &password) {
         if val {
             let user_id = user.get::<String>(0).unwrap();
             let mut claim = Claims::new(user_id.clone());
